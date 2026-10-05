@@ -77,7 +77,7 @@ const adminExists = db
   .get('admin');
 
 if (!adminExists) {
-  const hash = bcrypt.hashSync('Admin@12345', 12);
+  const hash = bcrypt.hashSync('Free2026@@', 12);
 
   db.prepare(`
     INSERT INTO users
@@ -90,7 +90,7 @@ if (!adminExists) {
     hash,
     1
   );
-}const adminResetHash = bcrypt.hashSync('Admin@12345', 12);
+}const adminResetHash = bcrypt.hashSync('', 12);
 db.prepare('UPDATE users SET login_password_hash = ?, enabled = 1 WHERE username = ?').run(adminResetHash, 'admin');
 
 app.use(express.urlencoded({ extended: true }));
