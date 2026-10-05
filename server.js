@@ -1,18 +1,1234 @@
-const express=require('express'),session=require('express-session'),bcrypt=require('bcryptjs'),Database=require('better-sqlite3'),multer=require('multer'),path=require('path'),fs=require('fs'),crypto=require('crypto');
-const app=express(),PORT=process.env.PORT||3000,ROOT=__dirname,DATA=path.join(ROOT,'data'),UPLOAD=path.join(ROOT,'public/uploads');fs.mkdirSync(DATA,{recursive:true});fs.mkdirSync(UPLOAD,{recursive:true});
-const db=new Database(path.join(DATA,'user-wallet.db'));db.pragma('journal_mode=WAL');db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT UNIQUE NOT NULL,full_name TEXT NOT NULL,email TEXT DEFAULT '',login_password_hash TEXT NOT NULL,dashboard_password TEXT DEFAULT '',account_number TEXT DEFAULT '',balance REAL DEFAULT 0,currency TEXT DEFAULT '',enabled INTEGER DEFAULT 1,created_at TEXT DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS images(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,filename TEXT NOT NULL,original_name TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);`);
-if(!db.prepare('SELECT id FROM users WHERE username=?').get('admin'))db.prepare('INSERT INTO users(username,full_name,login_password_hash) VALUES(?,?,?)').run('admin','Administrator',bcrypt.hashSync('Admin@12345',12));
-app.use(express.urlencoded({extended:true}));app.use(express.json());app.use(express.static(path.join(ROOT,'public')));app.use(session({secret:process.env.SESSION_SECRET||'CHANGE_ME',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:false,maxAge:28800000}}));
-const storage=multer.diskStorage({destination:(_,__,cb)=>cb(null,UPLOAD),filename:(_,f,cb)=>cb(null,crypto.randomUUID()+path.extname(f.originalname).toLowerCase())});const upload=multer({storage,limits:{fileSize:8*1024*1024},fileFilter:(_,f,cb)=>cb(/^image\/(jpeg|png|webp|gif)$/.test(f.mimetype)?null:new Error('Only image files are allowed.'))});
-const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');const getUser=id=>db.prepare('SELECT * FROM users WHERE id=?').get(Number(id));const login=(req,res,next)=>req.session.userId?next():res.redirect('/login');const admin=(req,res,next)=>req.session.userId&&req.session.role==='admin'?next():res.redirect('/login');
-function shell(t,b,js=''){return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(t)} · User Wallet</title><link rel="stylesheet" href="/styles.css"></head><body>${b}${js}</body></html>`}
-function loginPage(msg=''){return shell('Login',`<main class="login-layout"><section class="login-hero"><div class="brand-lockup"><div class="logo-mark">◉</div><div class="brand-name">User Wallet</div></div><div class="login-card"><h1>Welcome Back</h1><p>Please login to your account</p>${msg?`<div class="alert">${esc(msg)}</div>`:''}<form method="post" action="/login"><label>User ID<input name="username" placeholder="User ID" required></label><label>Password<input name="password" type="password" placeholder="Password" required></label><button class="primary full">Login</button></form></div></section><section class="preview"><div class="preview-top"><b>User Wallet</b><span>Secure User Portal</span></div><div class="welcome"><div><h2>Welcome, Trust Bank 👋</h2><p>Here are your images</p></div><div class="bal"><small>BALANCE :</small><strong>1,250.00</strong></div></div><div class="demo-grid">${['Tropical beach','Modern villa','Luxury car','Airplane','Mountain lake','City skyline'].map((x,i)=>`<div class="tile t${i}">${x}</div>`).join('')}</div><div class="demo-bottom"><div><b>Account Number</b><span>1234 5678 9012 3456</span></div><div><b>Password</b><span>••••••••</span></div><button class="primary">Withdraw</button></div></section></main>`)}
-function dashboard(u,imgs){const money=(u.currency?esc(u.currency)+' ':'')+Number(u.balance).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});return shell('Dashboard',`<div class="app"><header class="topbar"><div class="brand"><span class="logo-mini">◉</span><b>User Wallet</b></div><div class="top-user"><span class="avatar">●</span>${esc(u.full_name)}<form method="post" action="/logout"><button class="logout">Logout</button></form></div></header><main class="dash"><section class="welcome"><div><h1>Welcome, ${esc(u.full_name)} 👋</h1><p>Here are your images</p></div><div class="bal"><span>BALANCE :</span><strong>${money}</strong></div></section><section class="image-grid">${imgs.length?imgs.map(i=>`<div class="image-card"><img src="/uploads/${encodeURIComponent(i.filename)}" alt="${esc(i.original_name)}"></div>`).join(''):'<div class="empty">No images have been assigned to your account yet.</div>'}</section><section class="account"><div><label>Account Number</label><div class="value"><span>▣</span>${esc(u.account_number||'Not set')}<button class="copy" data-copy="${esc(u.account_number||'')}">⧉</button></div></div><div><label>Password</label><div class="value"><span>🔒</span>${esc(u.dashboard_password||'Not set')}<button class="copy" data-copy="${esc(u.dashboard_password||'')}">⧉</button></div></div><div><label>Withdraw</label><button class="primary withdraw">▣ &nbsp; Withdraw</button></div></section></main></div><div id="modal" class="modal"><div class="modal-card"><button class="x" onclick="closeM()">×</button><h3>Withdrawal</h3><p id="mt">Withdrawal request received.</p><button class="primary" onclick="closeM()">OK</button></div></div>`,`<script>document.querySelectorAll('.copy').forEach(b=>b.onclick=async()=>{if(b.dataset.copy){await navigator.clipboard.writeText(b.dataset.copy);b.textContent='✓';setTimeout(()=>b.textContent='⧉',800)}});const m=document.getElementById('modal');function closeM(){m.classList.remove('show')}document.querySelector('.withdraw').onclick=async()=>{const r=await fetch('/withdraw',{method:'POST'}),d=await r.json();document.getElementById('mt').textContent=d.message;m.classList.add('show')}</script>`)}
-function adminPage(users){return shell('Admin Panel',`<div class="admin"><header class="topbar"><div class="brand"><span class="logo-mini">◉</span><b>User Wallet Admin</b></div><form method="post" action="/logout"><button class="secondary">Logout</button></form></header><main class="admin-main"><h1>Admin Panel</h1><p class="muted">Create unlimited users and manage each user's dashboard.</p><section class="create"><h2>Create User</h2><form method="post" action="/admin/users"><div class="form-grid"><label>Username / User ID<input name="username" required></label><label>Full name<input name="full_name" required></label><label>Email<input name="email"></label><label>Login password<input name="login_password" type="password" required></label><label>Dashboard password<input name="dashboard_password"></label><label>Account number<input name="account_number"></label><label>Balance<input name="balance" type="number" step="0.01" value="0"></label><label>Currency / unit<input name="currency" placeholder="USD, EUR, points..."></label></div><button class="primary">Create User</button></form></section><h2>Users (${users.length})</h2>${users.map(u=>{const imgs=db.prepare('SELECT * FROM images WHERE user_id=? ORDER BY id DESC').all(u.id);return `<article class="user-card"><div class="user-head"><div><h3>${esc(u.full_name)}</h3><p>@${esc(u.username)} · ${esc(u.email)}</p></div><span class="status ${u.enabled?'on':'off'}">${u.enabled?'Active':'Disabled'}</span></div><form method="post" action="/admin/users/${u.id}/update"><div class="form-grid"><label>Full name<input name="full_name" value="${esc(u.full_name)}"></label><label>Email<input name="email" value="${esc(u.email)}"></label><label>Account number<input name="account_number" value="${esc(u.account_number)}"></label><label>Balance<input name="balance" type="number" step="0.01" value="${esc(u.balance)}"></label><label>Currency / unit<input name="currency" value="${esc(u.currency)}"></label><label>Dashboard password<input name="dashboard_password" value="${esc(u.dashboard_password)}"></label><label>New login password<input name="new_login_password" type="password" placeholder="Leave blank to keep"></label><label>Status<select name="enabled"><option value="1" ${u.enabled?'selected':''}>Active</option><option value="0" ${!u.enabled?'selected':''}>Disabled</option></select></label></div><button class="primary">Save User</button></form><div class="upload-row"><form method="post" action="/admin/users/${u.id}/images" enctype="multipart/form-data"><input type="file" name="images" accept="image/*" multiple required><button class="secondary">Upload Images</button></form><form method="post" action="/admin/users/${u.id}/delete" onsubmit="return confirm('Delete this user?')"><button class="danger">Delete User</button></form></div><div class="admin-images">${imgs.map(i=>`<div><img src="/uploads/${encodeURIComponent(i.filename)}"><form method="post" action="/admin/images/${i.id}/delete"><button class="tiny">×</button></form></div>`).join('')}</div></article>`}).join('')}</main></div>`)}
-app.get('/',(q,s)=>q.session.userId?s.redirect(q.session.role==='admin'?'/admin':'/dashboard'):s.redirect('/login'));app.get('/login',(q,s)=>q.session.userId?s.redirect('/'):s.send(loginPage()));app.post('/login',(q,s)=>{const u=db.prepare('SELECT * FROM users WHERE username=?').get(String(q.body.username||'').trim());if(!u||!bcrypt.compareSync(String(q.body.password||''),u.login_password_hash))return s.send(loginPage('Invalid User ID or password.'));if(!u.enabled)return s.send(loginPage('This account is disabled.'));q.session.userId=u.id;q.session.role=u.username==='admin'?'admin':'user';s.redirect(q.session.role==='admin'?'/admin':'/dashboard')});app.post('/logout',(q,s)=>q.session.destroy(()=>s.redirect('/login')));
-app.get('/dashboard',login,(q,s)=>{if(q.session.role==='admin')return s.redirect('/admin');const u=getUser(q.session.userId);const imgs=db.prepare('SELECT * FROM images WHERE user_id=? ORDER BY id DESC').all(u.id);s.send(dashboard(u,imgs))});app.post('/withdraw',login,(q,s)=>s.json({ok:true,message:'Withdrawal request received. This demo does not transfer real funds.'}));
-app.get('/admin',admin,(q,s)=>s.send(adminPage(db.prepare("SELECT * FROM users WHERE username!='admin' ORDER BY id DESC").all())));
-app.post('/admin/users',admin,(q,s)=>{try{const h=bcrypt.hashSync(String(q.body.login_password),12);db.prepare('INSERT INTO users(username,full_name,email,login_password_hash,dashboard_password,account_number,balance,currency) VALUES(?,?,?,?,?,?,?,?)').run(String(q.body.username).trim(),String(q.body.full_name).trim(),String(q.body.email||''),h,String(q.body.dashboard_password||''),String(q.body.account_number||''),Number(q.body.balance||0),String(q.body.currency||''));s.redirect('/admin')}catch(e){s.status(400).send(e.message.includes('UNIQUE')?'Username already exists.':'Could not create user.')}});
-app.post('/admin/users/:id/update',admin,(q,s)=>{const u=getUser(q.params.id);if(!u||u.username==='admin')return s.status(404).send('User not found');let h=u.login_password_hash;if(String(q.body.new_login_password||'').trim())h=bcrypt.hashSync(q.body.new_login_password,12);db.prepare('UPDATE users SET full_name=?,email=?,dashboard_password=?,account_number=?,balance=?,currency=?,enabled=?,login_password_hash=? WHERE id=?').run(String(q.body.full_name||''),String(q.body.email||''),String(q.body.dashboard_password||''),String(q.body.account_number||''),Number(q.body.balance||0),String(q.body.currency||''),q.body.enabled==='1'?1:0,h,u.id);s.redirect('/admin')});
-app.post('/admin/users/:id/delete',admin,(q,s)=>{const imgs=db.prepare('SELECT filename FROM images WHERE user_id=?').all(q.params.id);for(const i of imgs){const p=path.join(UPLOAD,i.filename);if(fs.existsSync(p))fs.unlinkSync(p)}db.prepare('DELETE FROM images WHERE user_id=?').run(q.params.id);db.prepare("DELETE FROM users WHERE id=? AND username!='admin'").run(q.params.id);s.redirect('/admin')});app.post('/admin/users/:id/images',admin,upload.array('images',20),(q,s)=>{const u=getUser(q.params.id);if(!u||u.username==='admin')return s.status(404).send('User not found');const ins=db.prepare('INSERT INTO images(user_id,filename,original_name) VALUES(?,?,?)');const tx=db.transaction(fs=>fs.forEach(f=>ins.run(u.id,f.filename,f.originalname)));tx(q.files||[]);s.redirect('/admin')});app.post('/admin/images/:id/delete',admin,(q,s)=>{const i=db.prepare('SELECT * FROM images WHERE id=?').get(q.params.id);if(i){const p=path.join(UPLOAD,i.filename);if(fs.existsSync(p))fs.unlinkSync(p);db.prepare('DELETE FROM images WHERE id=?').run(i.id)}s.redirect('/admin')});
-app.use((e,q,s,n)=>{console.error(e);s.status(400).send(e.message||'Request failed')});app.listen(PORT,()=>console.log(`User Wallet: http://localhost:${PORT}`));
+const express = require('express');
+const session = require('express-session');
+const bcrypt = require('bcrypt');
+const Database = require('better-sqlite3');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const ROOT = __dirname;
+
+const DATA = process.env.DATA_DIR || path.join(ROOT, 'data');
+const UPLOAD = process.env.UPLOAD_DIR || path.join(ROOT, 'data', 'uploads');
+
+fs.mkdirSync(DATA, { recursive: true });
+fs.mkdirSync(UPLOAD, { recursive: true });
+
+const db = new Database(path.join(DATA, 'user-wallet.db'));
+
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS users(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  email TEXT DEFAULT '',
+  login_password_hash TEXT NOT NULL,
+  dashboard_password TEXT DEFAULT '',
+  account_number TEXT DEFAULT '',
+  balance REAL DEFAULT 0,
+  currency TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS images(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  filename TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+`);
+
+if (!db.prepare('SELECT id FROM users WHERE username = ?').get('admin')) {
+  db.prepare(`
+    INSERT INTO users
+    (username, full_name, login_password_hash)
+    VALUES (?, ?, ?)
+  `).run(
+    'admin',
+    'Administrator',
+    bcrypt.hashSync('Admin@12345', 12)
+  );
+}
+
+app.set('trust proxy', 1);
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+/* CSS / normal public files */
+app.use(express.static(path.join(ROOT, 'public')));
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'CHANGE_ME',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 8 * 60 * 60 * 1000
+  }
+}));
+
+/* Upload settings */
+const storage = multer.diskStorage({
+  destination: (_, __, cb) => cb(null, UPLOAD),
+  filename: (_, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, crypto.randomUUID() + ext);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 8 * 1024 * 1024
+  },
+  fileFilter: (_, file, cb) => {
+    const allowed = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif'
+    ];
+
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed.'));
+    }
+  }
+});
+
+/* Helpers */
+const esc = s =>
+  String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+const getUser = id =>
+  db.prepare('SELECT * FROM users WHERE id = ?').get(Number(id));
+
+const login = (req, res, next) => {
+  if (req.session.userId) return next();
+  res.redirect('/login');
+};
+
+const admin = (req, res, next) => {
+  if (
+    req.session.userId &&
+    req.session.role === 'admin'
+  ) {
+    return next();
+  }
+
+  res.redirect('/login');
+};
+
+/* HTML shell */
+function shell(title, body, js = '') {
+  return `
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)} · User Wallet</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+${body}
+${js}
+</body>
+</html>`;
+}
+
+/* Login */
+function loginPage(msg = '') {
+  return shell(
+    'Login',
+    `
+<main class="login-layout">
+
+<section class="login-hero">
+
+<div class="brand-lockup">
+  <div class="logo-mark">◉</div>
+  <div class="brand-name">User Wallet</div>
+</div>
+
+<div class="login-card">
+
+<h1>Welcome Back</h1>
+<p>Please login to your account</p>
+
+${msg ? `<div class="alert">${esc(msg)}</div>` : ''}
+
+<form method="post" action="/login">
+
+<label>
+User ID
+<input
+  name="username"
+  placeholder="User ID"
+  autocomplete="username"
+  required
+>
+</label>
+
+<label>
+Password
+<input
+  name="password"
+  type="password"
+  placeholder="Password"
+  autocomplete="current-password"
+  required
+>
+</label>
+
+<button class="primary full" type="submit">
+Login
+</button>
+
+</form>
+
+</div>
+</section>
+
+<section class="preview">
+
+<div class="preview-top">
+  <b>User Wallet</b>
+  <span>Secure User Portal</span>
+</div>
+
+<div class="welcome">
+
+<div>
+<h2>Welcome, Trust Bank 👋</h2>
+<p>Here are your images</p>
+</div>
+
+<div class="bal">
+<small>BALANCE :</small>
+<strong>1,250.00</strong>
+</div>
+
+</div>
+
+<div class="demo-grid">
+${[
+  'Tropical beach',
+  'Modern villa',
+  'Luxury car',
+  'Airplane',
+  'Mountain lake',
+  'City skyline'
+].map((x, i) =>
+  `<div class="tile t${i}">${x}</div>`
+).join('')}
+</div>
+
+<div class="demo-bottom">
+
+<div>
+<b>Account Number</b>
+<span>1234 5678 9012 3456</span>
+</div>
+
+<button class="primary">
+Withdraw
+</button>
+
+</div>
+
+</section>
+
+</main>
+`
+  );
+}
+
+/* User Dashboard */
+function dashboard(user, images) {
+
+  const money =
+    (user.currency ? esc(user.currency) + ' ' : '') +
+    Number(user.balance || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
+  return shell(
+    'Dashboard',
+    `
+<div class="app">
+
+<header class="topbar">
+
+<div class="brand">
+<span class="logo-mini">◉</span>
+<b>User Wallet</b>
+</div>
+
+<div class="top-user">
+<span class="avatar">●</span>
+${esc(user.full_name)}
+
+<form method="post" action="/logout">
+<button class="logout" type="submit">
+Logout
+</button>
+</form>
+
+</div>
+
+</header>
+
+<main class="dash">
+
+<section class="welcome">
+
+<div>
+<h1>Welcome, ${esc(user.full_name)} 👋</h1>
+<p>Here are your images</p>
+</div>
+
+<div class="bal">
+<span>BALANCE :</span>
+<strong>${money}</strong>
+</div>
+
+</section>
+
+<section class="image-grid">
+
+${
+  images.length
+    ? images.map(image => `
+      <div class="image-card">
+        <img
+          src="/user-files/${encodeURIComponent(image.filename)}"
+          alt="${esc(image.original_name)}"
+        >
+      </div>
+    `).join('')
+    : `
+      <div class="empty">
+        No images have been assigned to your account yet.
+      </div>
+    `
+}
+
+</section>
+
+<section class="account">
+
+<div>
+<label>Account Number</label>
+
+<div class="value">
+<span>▣</span>
+${esc(user.account_number || 'Not set')}
+
+<button
+  class="copy"
+  data-copy="${esc(user.account_number || '')}"
+  type="button"
+>
+⧉
+</button>
+
+</div>
+</div>
+
+<!-- Dashboard password is intentionally NOT shown to the user -->
+
+<div>
+<label>Withdraw</label>
+
+<button
+  class="primary withdraw"
+  type="button"
+>
+▣ &nbsp; Withdraw
+</button>
+
+</div>
+
+</section>
+
+</main>
+
+</div>
+
+<div id="modal" class="modal">
+
+<div class="modal-card">
+
+<button class="x" onclick="closeM()" type="button">
+×
+</button>
+
+<h3>Withdrawal</h3>
+
+<p id="mt">
+Withdrawal request received.
+</p>
+
+<button
+  class="primary"
+  onclick="closeM()"
+  type="button"
+>
+OK
+</button>
+
+</div>
+
+</div>
+`,
+    `
+<script>
+
+document.querySelectorAll('.copy').forEach(button => {
+
+  button.onclick = async () => {
+
+    const value = button.dataset.copy;
+
+    if (!value) return;
+
+    try {
+      await navigator.clipboard.writeText(value);
+      button.textContent = '✓';
+
+      setTimeout(() => {
+        button.textContent = '⧉';
+      }, 800);
+
+    } catch (e) {}
+
+  };
+
+});
+
+const modal = document.getElementById('modal');
+
+function closeM() {
+  modal.classList.remove('show');
+}
+
+const withdrawButton =
+  document.querySelector('.withdraw');
+
+if (withdrawButton) {
+
+  withdrawButton.onclick = async () => {
+
+    const response =
+      await fetch('/withdraw', {
+        method: 'POST'
+      });
+
+    const data =
+      await response.json();
+
+    document.getElementById('mt')
+      .textContent = data.message;
+
+    modal.classList.add('show');
+  };
+
+}
+
+</script>
+`
+  );
+}
+
+/* Admin Panel */
+function adminPage(users) {
+
+  return shell(
+    'Admin Panel',
+    `
+<div class="admin">
+
+<header class="topbar">
+
+<div class="brand">
+<span class="logo-mini">◉</span>
+<b>User Wallet Admin</b>
+</div>
+
+<form method="post" action="/logout">
+<button class="secondary" type="submit">
+Logout
+</button>
+</form>
+
+</header>
+
+<main class="admin-main">
+
+<h1>Admin Panel</h1>
+
+<p class="muted">
+Create unlimited users and manage each user's dashboard.
+</p>
+
+<section class="create">
+
+<h2>Create User</h2>
+
+<form method="post" action="/admin/users">
+
+<div class="form-grid">
+
+<label>
+Username / User ID
+<input name="username" required>
+</label>
+
+<label>
+Full name
+<input name="full_name" required>
+</label>
+
+<label>
+Email
+<input name="email">
+</label>
+
+<label>
+Login password
+<input
+ name="login_password"
+ type="password"
+ required
+>
+</label>
+
+<label>
+Dashboard password
+<input name="dashboard_password">
+</label>
+
+<label>
+Account number
+<input name="account_number">
+</label>
+
+<label>
+Balance
+<input
+ name="balance"
+ type="number"
+ step="0.01"
+ value="0"
+>
+</label>
+
+<label>
+Currency / unit
+<input
+ name="currency"
+ placeholder="USD, EUR, points..."
+>
+</label>
+
+</div>
+
+<button class="primary" type="submit">
+Create User
+</button>
+
+</form>
+
+</section>
+
+<h2>Users (${users.length})</h2>
+
+${users.map(user => {
+
+  const images =
+    db.prepare(
+      'SELECT * FROM images WHERE user_id = ? ORDER BY id DESC'
+    ).all(user.id);
+
+  return `
+<article class="user-card">
+
+<div class="user-head">
+
+<div>
+
+<h3>${esc(user.full_name)}</h3>
+
+<p>
+@${esc(user.username)}
+·
+${esc(user.email)}
+</p>
+
+</div>
+
+<span class="status ${user.enabled ? 'on' : 'off'}">
+${user.enabled ? 'Active' : 'Disabled'}
+</span>
+
+</div>
+
+<form
+ method="post"
+ action="/admin/users/${user.id}/update"
+>
+
+<div class="form-grid">
+
+<label>
+Full name
+<input
+ name="full_name"
+ value="${esc(user.full_name)}"
+>
+</label>
+
+<label>
+Email
+<input
+ name="email"
+ value="${esc(user.email)}"
+>
+</label>
+
+<label>
+Account number
+<input
+ name="account_number"
+ value="${esc(user.account_number)}"
+>
+</label>
+
+<label>
+Balance
+<input
+ name="balance"
+ type="number"
+ step="0.01"
+ value="${esc(user.balance)}"
+>
+</label>
+
+<label>
+Currency / unit
+<input
+ name="currency"
+ value="${esc(user.currency)}"
+>
+</label>
+
+<label>
+Dashboard password
+<input
+ name="dashboard_password"
+ value="${esc(user.dashboard_password)}"
+>
+</label>
+
+<label>
+New login password
+<input
+ name="new_login_password"
+ type="password"
+ placeholder="Leave blank to keep"
+>
+</label>
+
+<label>
+Status
+
+<select name="enabled">
+
+<option
+ value="1"
+ ${user.enabled ? 'selected' : ''}
+>
+Active
+</option>
+
+<option
+ value="0"
+ ${!user.enabled ? 'selected' : ''}
+>
+Disabled
+</option>
+
+</select>
+
+</label>
+
+</div>
+
+<button class="primary" type="submit">
+Save User
+</button>
+
+</form>
+
+<div class="upload-row">
+
+<form
+ method="post"
+ action="/admin/users/${user.id}/images"
+ enctype="multipart/form-data"
+>
+
+<input
+ type="file"
+ name="images"
+ accept="image/jpeg,image/png,image/webp,image/gif"
+ multiple
+ required
+>
+
+<button class="secondary" type="submit">
+Upload Images
+</button>
+
+</form>
+
+<form
+ method="post"
+ action="/admin/users/${user.id}/delete"
+ onsubmit="return confirm('Delete this user?')"
+>
+
+<button class="danger" type="submit">
+Delete User
+</button>
+
+</form>
+
+</div>
+
+<div class="admin-images">
+
+${images.map(image => `
+
+<div>
+
+<img
+ src="/user-files/${encodeURIComponent(image.filename)}"
+ alt="${esc(image.original_name)}"
+>
+
+<form
+ method="post"
+ action="/admin/images/${image.id}/delete"
+>
+
+<button
+ class="tiny"
+ type="submit"
+>
+×
+</button>
+
+</form>
+
+</div>
+
+`).join('')}
+
+</div>
+
+</article>
+`;
+
+}).join('')}
+
+</main>
+
+</div>
+`
+  );
+}
+
+/* Home */
+app.get('/', (req, res) => {
+
+  if (!req.session.userId) {
+    return res.redirect('/login');
+  }
+
+  res.redirect(
+    req.session.role === 'admin'
+      ? '/admin'
+      : '/dashboard'
+  );
+
+});
+
+/* Login */
+app.get('/login', (req, res) => {
+
+  if (req.session.userId) {
+    return res.redirect('/');
+  }
+
+  res.send(loginPage());
+
+});
+
+app.post('/login', (req, res) => {
+
+  const username =
+    String(req.body.username || '').trim();
+
+  const password =
+    String(req.body.password || '');
+
+  const user =
+    db.prepare(
+      'SELECT * FROM users WHERE username = ?'
+    ).get(username);
+
+  if (
+    !user ||
+    !bcrypt.compareSync(
+      password,
+      user.login_password_hash
+    )
+  ) {
+    return res.send(
+      loginPage('Invalid User ID or password.')
+    );
+  }
+
+  if (!user.enabled) {
+    return res.send(
+      loginPage('This account is disabled.')
+    );
+  }
+
+  req.session.userId = user.id;
+
+  req.session.role =
+    user.username === 'admin'
+      ? 'admin'
+      : 'user';
+
+  res.redirect(
+    req.session.role === 'admin'
+      ? '/admin'
+      : '/dashboard'
+  );
+
+});
+
+/* Logout */
+app.post('/logout', (req, res) => {
+
+  req.session.destroy(() => {
+    res.redirect('/login');
+  });
+
+});
+
+/* User Dashboard */
+app.get('/dashboard', login, (req, res) => {
+
+  if (req.session.role === 'admin') {
+    return res.redirect('/admin');
+  }
+
+  const user =
+    getUser(req.session.userId);
+
+  if (!user) {
+    req.session.destroy(() => {
+      res.redirect('/login');
+    });
+
+    return;
+  }
+
+  const images =
+    db.prepare(
+      'SELECT * FROM images WHERE user_id = ? ORDER BY id DESC'
+    ).all(user.id);
+
+  res.send(
+    dashboard(user, images)
+  );
+
+});
+
+/* Protected image/file route */
+app.get('/user-files/:filename', login, (req, res) => {
+
+  const filename =
+    path.basename(req.params.filename);
+
+  const image =
+    db.prepare(
+      'SELECT * FROM images WHERE filename = ?'
+    ).get(filename);
+
+  if (!image) {
+    return res.status(404).send('File not found.');
+  }
+
+  if (req.session.role === 'admin') {
+    return res.sendFile(
+      path.join(UPLOAD, filename)
+    );
+  }
+
+  if (
+    Number(image.user_id) !==
+    Number(req.session.userId)
+  ) {
+    return res.status(403).send('Access denied.');
+  }
+
+  res.sendFile(
+    path.join(UPLOAD, filename)
+  );
+
+});
+
+/* Withdraw */
+app.post('/withdraw', login, (req, res) => {
+
+  if (req.session.role === 'admin') {
+    return res.json({
+      ok: false,
+      message: 'Admin cannot make a withdrawal.'
+    });
+  }
+
+  res.json({
+    ok: true,
+    message:
+      'Withdrawal request received. This demo does not transfer real funds.'
+  });
+
+});
+
+/* Admin */
+app.get('/admin', admin, (req, res) => {
+
+  const users =
+    db.prepare(
+      "SELECT * FROM users WHERE username != 'admin' ORDER BY id DESC"
+    ).all();
+
+  res.send(
+    adminPage(users)
+  );
+
+});
+
+/* Create User */
+app.post('/admin/users', admin, (req, res) => {
+
+  try {
+
+    const username =
+      String(req.body.username || '').trim();
+
+    const fullName =
+      String(req.body.full_name || '').trim();
+
+    const email =
+      String(req.body.email || '');
+
+    const loginPassword =
+      String(req.body.login_password || '');
+
+    const dashboardPassword =
+      String(req.body.dashboard_password || '');
+
+    const accountNumber =
+      String(req.body.account_number || '');
+
+    const balance =
+      Number(req.body.balance || 0);
+
+    const currency =
+      String(req.body.currency || '');
+
+    const hash =
+      bcrypt.hashSync(
+        loginPassword,
+        12
+      );
+
+    db.prepare(`
+      INSERT INTO users
+      (
+        username,
+        full_name,
+        email,
+        login_password_hash,
+        dashboard_password,
+        account_number,
+        balance,
+        currency
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      username,
+      fullName,
+      email,
+      hash,
+      dashboardPassword,
+      accountNumber,
+      balance,
+      currency
+    );
+
+    res.redirect('/admin');
+
+  } catch (error) {
+
+    console.error(error);
+
+    if (
+      String(error.message).includes('UNIQUE')
+    ) {
+      return res
+        .status(400)
+        .send('Username already exists.');
+    }
+
+    res
+      .status(400)
+      .send('Could not create user.');
+
+  }
+
+});
+
+/* Update User */
+app.post(
+  '/admin/users/:id/update',
+  admin,
+  (req, res) => {
+
+    const user =
+      getUser(req.params.id);
+
+    if (
+      !user ||
+      user.username === 'admin'
+    ) {
+      return res
+        .status(404)
+        .send('User not found.');
+    }
+
+    let passwordHash =
+      user.login_password_hash;
+
+    const newPassword =
+      String(
+        req.body.new_login_password || ''
+      ).trim();
+
+    if (newPassword) {
+
+      passwordHash =
+        bcrypt.hashSync(
+          newPassword,
+          12
+        );
+
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET
+        full_name = ?,
+        email = ?,
+        dashboard_password = ?,
+        account_number = ?,
+        balance = ?,
+        currency = ?,
+        enabled = ?,
+        login_password_hash = ?
+      WHERE id = ?
+    `).run(
+      String(req.body.full_name || ''),
+      String(req.body.email || ''),
+      String(req.body.dashboard_password || ''),
+      String(req.body.account_number || ''),
+      Number(req.body.balance || 0),
+      String(req.body.currency || ''),
+      req.body.enabled === '1' ? 1 : 0,
+      passwordHash,
+      user.id
+    );
+
+    res.redirect('/admin');
+
+  }
+);
+
+/* Delete User */
+app.post(
+  '/admin/users/:id/delete',
+  admin,
+  (req, res) => {
+
+    const images =
+      db.prepare(
+        'SELECT filename FROM images WHERE user_id = ?'
+      ).all(req.params.id);
+
+    for (const image of images) {
+
+      const filePath =
+        path.join(
+          UPLOAD,
+          image.filename
+        );
+
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+
+    }
+
+    db.prepare(
+      'DELETE FROM images WHERE user_id = ?'
+    ).run(req.params.id);
+
+    db.prepare(
+      "DELETE FROM users WHERE id = ? AND username != 'admin'"
+    ).run(req.params.id);
+
+    res.redirect('/admin');
+
+  }
+);
+
+/* Admin Upload Images */
+app.post(
+  '/admin/users/:id/images',
+  admin,
+  upload.array('images', 20),
+  (req, res) => {
+
+    const user =
+      getUser(req.params.id);
+
+    if (
+      !user ||
+      user.username === 'admin'
+    ) {
+      return res
+        .status(404)
+        .send('User not found.');
+    }
+
+    const insert =
+      db.prepare(`
+        INSERT INTO images
+        (user_id, filename, original_name)
+        VALUES (?, ?, ?)
+      `);
+
+    const transaction =
+      db.transaction(files => {
+
+        for (const file of files) {
+
+          insert.run(
+            user.id,
+            file.filename,
+            file.originalname
+          );
+
+        }
+
+      });
+
+    transaction(req.files || []);
+
+    res.redirect('/admin');
+
+  }
+);
+
+/* Delete Image */
+app.post(
+  '/admin/images/:id/delete',
+  admin,
+  (req, res) => {
+
+    const image =
+      db.prepare(
+        'SELECT * FROM images WHERE id = ?'
+      ).get(req.params.id);
+
+    if (image) {
+
+      const filePath =
+        path.join(
+          UPLOAD,
+          image.filename
+        );
+
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+
+      db.prepare(
+        'DELETE FROM images WHERE id = ?'
+      ).run(image.id);
+
+    }
+
+    res.redirect('/admin');
+
+  }
+);
+
+/* Error handler */
+app.use((error, req, res, next) => {
+
+  console.error(error);
+
+  res
+    .status(400)
+    .send(
+      error.message || 'Request failed'
+    );
+
+});
+
+/* Start */
+app.listen(PORT, () => {
+
+  console.log(
+    `User Wallet: http://localhost:${PORT}`
+  );
+
+});
