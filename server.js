@@ -1,1234 +1,681 @@
-const express = require('express');
-const session = require('express-session');
-const bcrypt = require('bcrypt');
-const Database = require('better-sqlite3');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-const ROOT = __dirname;
-
-const DATA = process.env.DATA_DIR || path.join(ROOT, 'data');
-const UPLOAD = process.env.UPLOAD_DIR || path.join(ROOT, 'data', 'uploads');
-
-fs.mkdirSync(DATA, { recursive: true });
-fs.mkdirSync(UPLOAD, { recursive: true });
-
-const db = new Database(path.join(DATA, 'user-wallet.db'));
-
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS users(
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  full_name TEXT NOT NULL,
-  email TEXT DEFAULT '',
-  login_password_hash TEXT NOT NULL,
-  dashboard_password TEXT DEFAULT '',
-  account_number TEXT DEFAULT '',
-  balance REAL DEFAULT 0,
-  currency TEXT DEFAULT '',
-  enabled INTEGER DEFAULT 1,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS images(
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  filename TEXT NOT NULL,
-  original_name TEXT NOT NULL,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-`);
-
-if (!db.prepare('SELECT id FROM users WHERE username = ?').get('admin')) {
-  db.prepare(`
-    INSERT INTO users
-    (username, full_name, login_password_hash)
-    VALUES (?, ?, ?)
-  `).run(
-    'admin',
-    'Administrator',
-    bcrypt.hashSync('Admin@12345', 12)
-  );
+*{
+  box-sizing:border-box;
+  margin:0;
+  padding:0;
 }
 
-app.set('trust proxy', 1);
-
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-
-/* CSS / normal public files */
-app.use(express.static(path.join(ROOT, 'public')));
-
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'CHANGE_ME',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 8 * 60 * 60 * 1000
-  }
-}));
-
-/* Upload settings */
-const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, UPLOAD),
-  filename: (_, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, crypto.randomUUID() + ext);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 8 * 1024 * 1024
-  },
-  fileFilter: (_, file, cb) => {
-    const allowed = [
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-      'image/gif'
-    ];
-
-    if (allowed.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed.'));
-    }
-  }
-});
-
-/* Helpers */
-const esc = s =>
-  String(s ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-
-const getUser = id =>
-  db.prepare('SELECT * FROM users WHERE id = ?').get(Number(id));
-
-const login = (req, res, next) => {
-  if (req.session.userId) return next();
-  res.redirect('/login');
-};
-
-const admin = (req, res, next) => {
-  if (
-    req.session.userId &&
-    req.session.role === 'admin'
-  ) {
-    return next();
-  }
-
-  res.redirect('/login');
-};
-
-/* HTML shell */
-function shell(title, body, js = '') {
-  return `
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} · User Wallet</title>
-<link rel="stylesheet" href="/styles.css">
-</head>
-<body>
-${body}
-${js}
-</body>
-</html>`;
+html,body{
+  min-height:100%;
 }
 
-/* Login */
-function loginPage(msg = '') {
-  return shell(
-    'Login',
-    `
-<main class="login-layout">
-
-<section class="login-hero">
-
-<div class="brand-lockup">
-  <div class="logo-mark">◉</div>
-  <div class="brand-name">User Wallet</div>
-</div>
-
-<div class="login-card">
-
-<h1>Welcome Back</h1>
-<p>Please login to your account</p>
-
-${msg ? `<div class="alert">${esc(msg)}</div>` : ''}
-
-<form method="post" action="/login">
-
-<label>
-User ID
-<input
-  name="username"
-  placeholder="User ID"
-  autocomplete="username"
-  required
->
-</label>
-
-<label>
-Password
-<input
-  name="password"
-  type="password"
-  placeholder="Password"
-  autocomplete="current-password"
-  required
->
-</label>
-
-<button class="primary full" type="submit">
-Login
-</button>
-
-</form>
-
-</div>
-</section>
-
-<section class="preview">
-
-<div class="preview-top">
-  <b>User Wallet</b>
-  <span>Secure User Portal</span>
-</div>
-
-<div class="welcome">
-
-<div>
-<h2>Welcome, Trust Bank 👋</h2>
-<p>Here are your images</p>
-</div>
-
-<div class="bal">
-<small>BALANCE :</small>
-<strong>1,250.00</strong>
-</div>
-
-</div>
-
-<div class="demo-grid">
-${[
-  'Tropical beach',
-  'Modern villa',
-  'Luxury car',
-  'Airplane',
-  'Mountain lake',
-  'City skyline'
-].map((x, i) =>
-  `<div class="tile t${i}">${x}</div>`
-).join('')}
-</div>
-
-<div class="demo-bottom">
-
-<div>
-<b>Account Number</b>
-<span>1234 5678 9012 3456</span>
-</div>
-
-<button class="primary">
-Withdraw
-</button>
-
-</div>
-
-</section>
-
-</main>
-`
-  );
+body{
+  font-family:Inter,Arial,Helvetica,sans-serif;
+  color:#10275a;
+  background:#eef4fb;
 }
 
-/* User Dashboard */
-function dashboard(user, images) {
-
-  const money =
-    (user.currency ? esc(user.currency) + ' ' : '') +
-    Number(user.balance || 0).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-
-  return shell(
-    'Dashboard',
-    `
-<div class="app">
-
-<header class="topbar">
-
-<div class="brand">
-<span class="logo-mini">◉</span>
-<b>User Wallet</b>
-</div>
-
-<div class="top-user">
-<span class="avatar">●</span>
-${esc(user.full_name)}
-
-<form method="post" action="/logout">
-<button class="logout" type="submit">
-Logout
-</button>
-</form>
-
-</div>
-
-</header>
-
-<main class="dash">
-
-<section class="welcome">
-
-<div>
-<h1>Welcome, ${esc(user.full_name)} 👋</h1>
-<p>Here are your images</p>
-</div>
-
-<div class="bal">
-<span>BALANCE :</span>
-<strong>${money}</strong>
-</div>
-
-</section>
-
-<section class="image-grid">
-
-${
-  images.length
-    ? images.map(image => `
-      <div class="image-card">
-        <img
-          src="/user-files/${encodeURIComponent(image.filename)}"
-          alt="${esc(image.original_name)}"
-        >
-      </div>
-    `).join('')
-    : `
-      <div class="empty">
-        No images have been assigned to your account yet.
-      </div>
-    `
+button,input,select{
+  font:inherit;
 }
 
-</section>
-
-<section class="account">
-
-<div>
-<label>Account Number</label>
-
-<div class="value">
-<span>▣</span>
-${esc(user.account_number || 'Not set')}
-
-<button
-  class="copy"
-  data-copy="${esc(user.account_number || '')}"
-  type="button"
->
-⧉
-</button>
-
-</div>
-</div>
-
-<!-- Dashboard password is intentionally NOT shown to the user -->
-
-<div>
-<label>Withdraw</label>
-
-<button
-  class="primary withdraw"
-  type="button"
->
-▣ &nbsp; Withdraw
-</button>
-
-</div>
-
-</section>
-
-</main>
-
-</div>
-
-<div id="modal" class="modal">
-
-<div class="modal-card">
-
-<button class="x" onclick="closeM()" type="button">
-×
-</button>
-
-<h3>Withdrawal</h3>
-
-<p id="mt">
-Withdrawal request received.
-</p>
-
-<button
-  class="primary"
-  onclick="closeM()"
-  type="button"
->
-OK
-</button>
-
-</div>
-
-</div>
-`,
-    `
-<script>
-
-document.querySelectorAll('.copy').forEach(button => {
-
-  button.onclick = async () => {
-
-    const value = button.dataset.copy;
-
-    if (!value) return;
-
-    try {
-      await navigator.clipboard.writeText(value);
-      button.textContent = '✓';
-
-      setTimeout(() => {
-        button.textContent = '⧉';
-      }, 800);
-
-    } catch (e) {}
-
-  };
-
-});
-
-const modal = document.getElementById('modal');
-
-function closeM() {
-  modal.classList.remove('show');
+button{
+  cursor:pointer;
 }
 
-const withdrawButton =
-  document.querySelector('.withdraw');
-
-if (withdrawButton) {
-
-  withdrawButton.onclick = async () => {
-
-    const response =
-      await fetch('/withdraw', {
-        method: 'POST'
-      });
-
-    const data =
-      await response.json();
-
-    document.getElementById('mt')
-      .textContent = data.message;
-
-    modal.classList.add('show');
-  };
-
+a{
+  text-decoration:none;
 }
 
-</script>
-`
-  );
+/* =========================
+   LOGIN
+========================= */
+
+.login-layout{
+  min-height:100vh;
+  display:grid;
+  grid-template-columns:1.15fr .85fr;
+  background:#eef5fc;
 }
 
-/* Admin Panel */
-function adminPage(users) {
-
-  return shell(
-    'Admin Panel',
-    `
-<div class="admin">
-
-<header class="topbar">
-
-<div class="brand">
-<span class="logo-mini">◉</span>
-<b>User Wallet Admin</b>
-</div>
-
-<form method="post" action="/logout">
-<button class="secondary" type="submit">
-Logout
-</button>
-</form>
-
-</header>
-
-<main class="admin-main">
-
-<h1>Admin Panel</h1>
-
-<p class="muted">
-Create unlimited users and manage each user's dashboard.
-</p>
-
-<section class="create">
-
-<h2>Create User</h2>
-
-<form method="post" action="/admin/users">
-
-<div class="form-grid">
-
-<label>
-Username / User ID
-<input name="username" required>
-</label>
-
-<label>
-Full name
-<input name="full_name" required>
-</label>
-
-<label>
-Email
-<input name="email">
-</label>
-
-<label>
-Login password
-<input
- name="login_password"
- type="password"
- required
->
-</label>
-
-<label>
-Dashboard password
-<input name="dashboard_password">
-</label>
-
-<label>
-Account number
-<input name="account_number">
-</label>
-
-<label>
-Balance
-<input
- name="balance"
- type="number"
- step="0.01"
- value="0"
->
-</label>
-
-<label>
-Currency / unit
-<input
- name="currency"
- placeholder="USD, EUR, points..."
->
-</label>
-
-</div>
-
-<button class="primary" type="submit">
-Create User
-</button>
-
-</form>
-
-</section>
-
-<h2>Users (${users.length})</h2>
-
-${users.map(user => {
-
-  const images =
-    db.prepare(
-      'SELECT * FROM images WHERE user_id = ? ORDER BY id DESC'
-    ).all(user.id);
-
-  return `
-<article class="user-card">
-
-<div class="user-head">
-
-<div>
-
-<h3>${esc(user.full_name)}</h3>
-
-<p>
-@${esc(user.username)}
-·
-${esc(user.email)}
-</p>
-
-</div>
-
-<span class="status ${user.enabled ? 'on' : 'off'}">
-${user.enabled ? 'Active' : 'Disabled'}
-</span>
-
-</div>
-
-<form
- method="post"
- action="/admin/users/${user.id}/update"
->
-
-<div class="form-grid">
-
-<label>
-Full name
-<input
- name="full_name"
- value="${esc(user.full_name)}"
->
-</label>
-
-<label>
-Email
-<input
- name="email"
- value="${esc(user.email)}"
->
-</label>
-
-<label>
-Account number
-<input
- name="account_number"
- value="${esc(user.account_number)}"
->
-</label>
-
-<label>
-Balance
-<input
- name="balance"
- type="number"
- step="0.01"
- value="${esc(user.balance)}"
->
-</label>
-
-<label>
-Currency / unit
-<input
- name="currency"
- value="${esc(user.currency)}"
->
-</label>
-
-<label>
-Dashboard password
-<input
- name="dashboard_password"
- value="${esc(user.dashboard_password)}"
->
-</label>
-
-<label>
-New login password
-<input
- name="new_login_password"
- type="password"
- placeholder="Leave blank to keep"
->
-</label>
-
-<label>
-Status
-
-<select name="enabled">
-
-<option
- value="1"
- ${user.enabled ? 'selected' : ''}
->
-Active
-</option>
-
-<option
- value="0"
- ${!user.enabled ? 'selected' : ''}
->
-Disabled
-</option>
-
-</select>
-
-</label>
-
-</div>
-
-<button class="primary" type="submit">
-Save User
-</button>
-
-</form>
-
-<div class="upload-row">
-
-<form
- method="post"
- action="/admin/users/${user.id}/images"
- enctype="multipart/form-data"
->
-
-<input
- type="file"
- name="images"
- accept="image/jpeg,image/png,image/webp,image/gif"
- multiple
- required
->
-
-<button class="secondary" type="submit">
-Upload Images
-</button>
-
-</form>
-
-<form
- method="post"
- action="/admin/users/${user.id}/delete"
- onsubmit="return confirm('Delete this user?')"
->
-
-<button class="danger" type="submit">
-Delete User
-</button>
-
-</form>
-
-</div>
-
-<div class="admin-images">
-
-${images.map(image => `
-
-<div>
-
-<img
- src="/user-files/${encodeURIComponent(image.filename)}"
- alt="${esc(image.original_name)}"
->
-
-<form
- method="post"
- action="/admin/images/${image.id}/delete"
->
-
-<button
- class="tiny"
- type="submit"
->
-×
-</button>
-
-</form>
-
-</div>
-
-`).join('')}
-
-</div>
-
-</article>
-`;
-
-}).join('')}
-
-</main>
-
-</div>
-`
-  );
+.login-hero{
+  position:relative;
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:50px;
+  overflow:hidden;
+  background:
+    linear-gradient(135deg,rgba(5,54,112,.82),rgba(15,137,226,.48)),
+    linear-gradient(135deg,#0755a5,#35a9ed);
 }
 
-/* Home */
-app.get('/', (req, res) => {
+.login-hero::before{
+  content:"";
+  position:absolute;
+  width:520px;
+  height:520px;
+  border-radius:50%;
+  background:rgba(255,255,255,.08);
+  top:-180px;
+  left:-150px;
+}
 
-  if (!req.session.userId) {
-    return res.redirect('/login');
+.login-hero::after{
+  content:"";
+  position:absolute;
+  width:420px;
+  height:420px;
+  border-radius:50%;
+  background:rgba(255,255,255,.07);
+  bottom:-180px;
+  right:-100px;
+}
+
+.brand-lockup{
+  position:relative;
+  z-index:2;
+  color:#fff;
+  text-align:center;
+}
+
+.logo-mark{
+  width:82px;
+  height:82px;
+  margin:0 auto 18px;
+  border-radius:24px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:#fff;
+  color:#0868d8;
+  font-size:38px;
+  font-weight:900;
+  box-shadow:0 18px 40px rgba(0,0,0,.2);
+}
+
+.brand-name{
+  font-size:34px;
+  font-weight:900;
+  letter-spacing:-.7px;
+}
+
+.brand-tagline{
+  margin-top:8px;
+  font-size:15px;
+  opacity:.9;
+}
+
+.login-card{
+  align-self:center;
+  width:min(460px,calc(100% - 50px));
+  margin:auto;
+  padding:38px;
+  background:#fff;
+  border-radius:26px;
+  box-shadow:0 25px 70px rgba(14,55,95,.16);
+}
+
+.login-card h1{
+  margin-bottom:8px;
+  font-size:31px;
+  color:#10275a;
+}
+
+.login-card .subtitle{
+  margin-bottom:26px;
+  color:#72839b;
+}
+
+.login-card label{
+  display:block;
+  margin-bottom:8px;
+  font-size:14px;
+  font-weight:800;
+  color:#243d62;
+}
+
+.login-card input{
+  width:100%;
+  height:52px;
+  margin-bottom:18px;
+  padding:0 15px;
+  border:1px solid #d4e0ed;
+  border-radius:12px;
+  outline:none;
+  background:#f8fbff;
+  color:#17355f;
+}
+
+.login-card input:focus{
+  border-color:#1685e8;
+  box-shadow:0 0 0 4px rgba(22,133,232,.12);
+}
+
+.primary,
+.login-card button{
+  width:100%;
+  min-height:52px;
+  border:0;
+  border-radius:12px;
+  background:linear-gradient(135deg,#0868d8,#2498f3);
+  color:#fff;
+  font-weight:800;
+  box-shadow:0 10px 24px rgba(18,111,218,.24);
+}
+
+.primary:hover,
+.login-card button:hover{
+  filter:brightness(1.04);
+}
+
+.alert{
+  margin-bottom:18px;
+  padding:12px 14px;
+  border-radius:11px;
+  background:#fff0f0;
+  border:1px solid #ffd0cc;
+  color:#b42318;
+}
+
+/* Login demo/preview */
+
+.preview{
+  margin-top:28px;
+  padding:20px;
+  border-radius:18px;
+  background:#f5f9fe;
+  border:1px solid #e1eaf4;
+}
+
+.preview-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:14px;
+}
+
+.welcome{
+  font-weight:800;
+  color:#123b78;
+}
+
+.bal{
+  font-size:20px;
+  font-weight:900;
+  color:#0868d8;
+}
+
+.demo-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+}
+
+.tile{
+  height:70px;
+  border-radius:10px;
+  background:linear-gradient(135deg,#d9ecff,#8bc8fa);
+}
+
+.demo-bottom{
+  margin-top:12px;
+  padding:13px;
+  border-radius:10px;
+  background:#fff;
+  font-size:13px;
+  font-weight:700;
+  color:#53667f;
+}
+
+/* =========================
+   USER DASHBOARD
+========================= */
+
+.app{
+  min-height:100vh;
+  background:#eef4fb;
+}
+
+.topbar{
+  height:72px;
+  padding:0 32px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  background:#fff;
+  box-shadow:0 4px 20px rgba(15,50,90,.08);
+}
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap:11px;
+  color:#1256a0;
+  font-size:21px;
+  font-weight:900;
+}
+
+.logo-mini{
+  width:42px;
+  height:42px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:12px;
+  background:linear-gradient(135deg,#0868d8,#31a4f5);
+  color:#fff;
+  font-size:20px;
+  font-weight:900;
+}
+
+.top-user{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.avatar{
+  width:40px;
+  height:40px;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:#e2f0ff;
+  color:#0868d8;
+  font-weight:900;
+}
+
+.logout{
+  padding:9px 15px;
+  border-radius:9px;
+  background:#fff1f1;
+  color:#b42318;
+  font-weight:800;
+}
+
+.dash{
+  width:min(1180px,calc(100% - 40px));
+  margin:28px auto 60px;
+}
+
+.dash .welcome{
+  padding:30px;
+  margin-bottom:22px;
+  border-radius:22px;
+  color:#fff;
+  background:linear-gradient(135deg,#0759b7,#2399f4);
+  box-shadow:0 18px 40px rgba(15,91,175,.20);
+}
+
+.dash .welcome h1{
+  margin-bottom:8px;
+  font-size:30px;
+}
+
+.dash .welcome p{
+  opacity:.9;
+}
+
+.dash .bal{
+  margin-bottom:22px;
+  padding:25px;
+  border-radius:20px;
+  background:#fff;
+  box-shadow:0 8px 28px rgba(20,60,100,.08);
+}
+
+.dash .bal strong{
+  display:block;
+  margin-top:6px;
+  font-size:34px;
+  color:#0868d8;
+}
+
+/* Images */
+
+.image-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:18px;
+  margin-bottom:25px;
+}
+
+.image-card{
+  overflow:hidden;
+  border-radius:17px;
+  background:#fff;
+  border:1px solid #e0e9f3;
+  box-shadow:0 8px 25px rgba(20,60,100,.07);
+}
+
+.image-card img{
+  width:100%;
+  height:240px;
+  display:block;
+  object-fit:cover;
+  background:#f4f8fc;
+}
+
+.image-card .caption{
+  padding:12px 14px;
+  color:#50627a;
+  font-size:13px;
+  font-weight:700;
+}
+
+.empty{
+  padding:35px;
+  text-align:center;
+  border-radius:17px;
+  background:#fff;
+  color:#71809a;
+}
+
+/* Account */
+
+.account{
+  padding:25px;
+  border-radius:20px;
+  background:#fff;
+  box-shadow:0 8px 28px rgba(20,60,100,.08);
+}
+
+.account h2{
+  margin-bottom:18px;
+  color:#123b78;
+}
+
+.value{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:15px;
+  padding:16px;
+  border-radius:12px;
+  background:#f5f9fe;
+  border:1px solid #e1eaf4;
+  font-size:18px;
+  font-weight:800;
+  color:#173d70;
+  word-break:break-word;
+}
+
+.copy{
+  border:0;
+  padding:9px 14px;
+  border-radius:9px;
+  background:#e3f1ff;
+  color:#0868d8;
+  font-weight:800;
+}
+
+.withdraw{
+  width:100%;
+  margin-top:18px;
+  min-height:52px;
+  border:0;
+  border-radius:12px;
+  background:linear-gradient(135deg,#0868d8,#2498f3);
+  color:#fff;
+  font-weight:900;
+  box-shadow:0 10px 22px rgba(18,111,218,.22);
+}
+
+.withdraw:hover{
+  filter:brightness(1.05);
+}
+
+/* Modal */
+
+.modal{
+  position:fixed;
+  inset:0;
+  z-index:100;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+  background:rgba(5,25,55,.58);
+}
+
+.modal.show{
+  display:flex;
+}
+
+.modal-card{
+  position:relative;
+  width:min(440px,100%);
+  padding:30px;
+  border-radius:22px;
+  background:#fff;
+  box-shadow:0 25px 70px rgba(0,0,0,.25);
+}
+
+.modal-card h2{
+  margin-bottom:12px;
+  color:#123b78;
+}
+
+.modal-card p{
+  color:#667991;
+}
+
+.x{
+  position:absolute;
+  top:13px;
+  right:15px;
+  width:34px;
+  height:34px;
+  border:0;
+  border-radius:50%;
+  background:#eef4fb;
+  color:#315276;
+  font-size:20px;
+}
+
+/* =========================
+   ADMIN
+========================= */
+
+.admin-layout{
+  min-height:100vh;
+  display:grid;
+  grid-template-columns:250px 1fr;
+  background:#f3f7fc;
+}
+
+.admin-sidebar{
+  padding:25px 18px;
+  background:#092f63;
+  color:#fff;
+}
+
+.admin-sidebar h2{
+  margin-bottom:25px;
+  font-size:22px;
+}
+
+.admin-nav{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.admin-nav a{
+  padding:12px 14px;
+  border-radius:10px;
+  color:#dcecff;
+}
+
+.admin-nav a:hover{
+  background:rgba(255,255,255,.12);
+}
+
+.admin-main{
+  padding:28px;
+}
+
+.admin-header{
+  padding:22px;
+  margin-bottom:22px;
+  border-radius:18px;
+  background:#fff;
+  box-shadow:0 7px 25px rgba(20,60,100,.08);
+}
+
+.stats-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:18px;
+  margin-bottom:22px;
+}
+
+.stat-card{
+  padding:22px;
+  border-radius:17px;
+  background:#fff;
+  box-shadow:0 7px 25px rgba(20,60,100,.07);
+}
+
+.stat-card strong{
+  display:block;
+  margin-top:8px;
+  font-size:28px;
+  color:#1267c9;
+}
+
+.admin-table-wrap{
+  padding:20px;
+  overflow-x:auto;
+  border-radius:18px;
+  background:#fff;
+}
+
+table{
+  width:100%;
+  border-collapse:collapse;
+}
+
+th,td{
+  padding:13px 10px;
+  border-bottom:1px solid #e8eef5;
+  text-align:left;
+}
+
+th{
+  color:#315276;
+  background:#f7faff;
+}
+
+/* =========================
+   RESPONSIVE
+========================= */
+
+@media(max-width:900px){
+
+  .login-layout{
+    grid-template-columns:1fr;
   }
 
-  res.redirect(
-    req.session.role === 'admin'
-      ? '/admin'
-      : '/dashboard'
-  );
-
-});
-
-/* Login */
-app.get('/login', (req, res) => {
-
-  if (req.session.userId) {
-    return res.redirect('/');
+  .login-hero{
+    min-height:260px;
+    padding:35px 20px;
   }
 
-  res.send(loginPage());
-
-});
-
-app.post('/login', (req, res) => {
-
-  const username =
-    String(req.body.username || '').trim();
-
-  const password =
-    String(req.body.password || '');
-
-  const user =
-    db.prepare(
-      'SELECT * FROM users WHERE username = ?'
-    ).get(username);
-
-  if (
-    !user ||
-    !bcrypt.compareSync(
-      password,
-      user.login_password_hash
-    )
-  ) {
-    return res.send(
-      loginPage('Invalid User ID or password.')
-    );
+  .brand-name{
+    font-size:28px;
   }
 
-  if (!user.enabled) {
-    return res.send(
-      loginPage('This account is disabled.')
-    );
+  .login-card{
+    margin:30px auto;
   }
 
-  req.session.userId = user.id;
-
-  req.session.role =
-    user.username === 'admin'
-      ? 'admin'
-      : 'user';
-
-  res.redirect(
-    req.session.role === 'admin'
-      ? '/admin'
-      : '/dashboard'
-  );
-
-});
-
-/* Logout */
-app.post('/logout', (req, res) => {
-
-  req.session.destroy(() => {
-    res.redirect('/login');
-  });
-
-});
-
-/* User Dashboard */
-app.get('/dashboard', login, (req, res) => {
-
-  if (req.session.role === 'admin') {
-    return res.redirect('/admin');
+  .image-grid{
+    grid-template-columns:repeat(2,1fr);
   }
 
-  const user =
-    getUser(req.session.userId);
-
-  if (!user) {
-    req.session.destroy(() => {
-      res.redirect('/login');
-    });
-
-    return;
+  .stats-grid{
+    grid-template-columns:1fr;
   }
 
-  const images =
-    db.prepare(
-      'SELECT * FROM images WHERE user_id = ? ORDER BY id DESC'
-    ).all(user.id);
-
-  res.send(
-    dashboard(user, images)
-  );
-
-});
-
-/* Protected image/file route */
-app.get('/user-files/:filename', login, (req, res) => {
-
-  const filename =
-    path.basename(req.params.filename);
-
-  const image =
-    db.prepare(
-      'SELECT * FROM images WHERE filename = ?'
-    ).get(filename);
-
-  if (!image) {
-    return res.status(404).send('File not found.');
+  .admin-layout{
+    grid-template-columns:1fr;
   }
 
-  if (req.session.role === 'admin') {
-    return res.sendFile(
-      path.join(UPLOAD, filename)
-    );
+  .admin-sidebar{
+    min-height:auto;
   }
 
-  if (
-    Number(image.user_id) !==
-    Number(req.session.userId)
-  ) {
-    return res.status(403).send('Access denied.');
+  .admin-nav{
+    flex-direction:row;
+    flex-wrap:wrap;
+  }
+}
+
+@media(max-width:600px){
+
+  .login-hero{
+    min-height:220px;
   }
 
-  res.sendFile(
-    path.join(UPLOAD, filename)
-  );
-
-});
-
-/* Withdraw */
-app.post('/withdraw', login, (req, res) => {
-
-  if (req.session.role === 'admin') {
-    return res.json({
-      ok: false,
-      message: 'Admin cannot make a withdrawal.'
-    });
+  .logo-mark{
+    width:65px;
+    height:65px;
+    font-size:30px;
   }
 
-  res.json({
-    ok: true,
-    message:
-      'Withdrawal request received. This demo does not transfer real funds.'
-  });
-
-});
-
-/* Admin */
-app.get('/admin', admin, (req, res) => {
-
-  const users =
-    db.prepare(
-      "SELECT * FROM users WHERE username != 'admin' ORDER BY id DESC"
-    ).all();
-
-  res.send(
-    adminPage(users)
-  );
-
-});
-
-/* Create User */
-app.post('/admin/users', admin, (req, res) => {
-
-  try {
-
-    const username =
-      String(req.body.username || '').trim();
-
-    const fullName =
-      String(req.body.full_name || '').trim();
-
-    const email =
-      String(req.body.email || '');
-
-    const loginPassword =
-      String(req.body.login_password || '');
-
-    const dashboardPassword =
-      String(req.body.dashboard_password || '');
-
-    const accountNumber =
-      String(req.body.account_number || '');
-
-    const balance =
-      Number(req.body.balance || 0);
-
-    const currency =
-      String(req.body.currency || '');
-
-    const hash =
-      bcrypt.hashSync(
-        loginPassword,
-        12
-      );
-
-    db.prepare(`
-      INSERT INTO users
-      (
-        username,
-        full_name,
-        email,
-        login_password_hash,
-        dashboard_password,
-        account_number,
-        balance,
-        currency
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      username,
-      fullName,
-      email,
-      hash,
-      dashboardPassword,
-      accountNumber,
-      balance,
-      currency
-    );
-
-    res.redirect('/admin');
-
-  } catch (error) {
-
-    console.error(error);
-
-    if (
-      String(error.message).includes('UNIQUE')
-    ) {
-      return res
-        .status(400)
-        .send('Username already exists.');
-    }
-
-    res
-      .status(400)
-      .send('Could not create user.');
-
+  .brand-name{
+    font-size:24px;
   }
 
-});
-
-/* Update User */
-app.post(
-  '/admin/users/:id/update',
-  admin,
-  (req, res) => {
-
-    const user =
-      getUser(req.params.id);
-
-    if (
-      !user ||
-      user.username === 'admin'
-    ) {
-      return res
-        .status(404)
-        .send('User not found.');
-    }
-
-    let passwordHash =
-      user.login_password_hash;
-
-    const newPassword =
-      String(
-        req.body.new_login_password || ''
-      ).trim();
-
-    if (newPassword) {
-
-      passwordHash =
-        bcrypt.hashSync(
-          newPassword,
-          12
-        );
-
-    }
-
-    db.prepare(`
-      UPDATE users
-      SET
-        full_name = ?,
-        email = ?,
-        dashboard_password = ?,
-        account_number = ?,
-        balance = ?,
-        currency = ?,
-        enabled = ?,
-        login_password_hash = ?
-      WHERE id = ?
-    `).run(
-      String(req.body.full_name || ''),
-      String(req.body.email || ''),
-      String(req.body.dashboard_password || ''),
-      String(req.body.account_number || ''),
-      Number(req.body.balance || 0),
-      String(req.body.currency || ''),
-      req.body.enabled === '1' ? 1 : 0,
-      passwordHash,
-      user.id
-    );
-
-    res.redirect('/admin');
-
+  .login-card{
+    width:calc(100% - 24px);
+    padding:26px 20px;
   }
-);
 
-/* Delete User */
-app.post(
-  '/admin/users/:id/delete',
-  admin,
-  (req, res) => {
-
-    const images =
-      db.prepare(
-        'SELECT filename FROM images WHERE user_id = ?'
-      ).all(req.params.id);
-
-    for (const image of images) {
-
-      const filePath =
-        path.join(
-          UPLOAD,
-          image.filename
-        );
-
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-
-    }
-
-    db.prepare(
-      'DELETE FROM images WHERE user_id = ?'
-    ).run(req.params.id);
-
-    db.prepare(
-      "DELETE FROM users WHERE id = ? AND username != 'admin'"
-    ).run(req.params.id);
-
-    res.redirect('/admin');
-
+  .login-card h1{
+    font-size:26px;
   }
-);
 
-/* Admin Upload Images */
-app.post(
-  '/admin/users/:id/images',
-  admin,
-  upload.array('images', 20),
-  (req, res) => {
-
-    const user =
-      getUser(req.params.id);
-
-    if (
-      !user ||
-      user.username === 'admin'
-    ) {
-      return res
-        .status(404)
-        .send('User not found.');
-    }
-
-    const insert =
-      db.prepare(`
-        INSERT INTO images
-        (user_id, filename, original_name)
-        VALUES (?, ?, ?)
-      `);
-
-    const transaction =
-      db.transaction(files => {
-
-        for (const file of files) {
-
-          insert.run(
-            user.id,
-            file.filename,
-            file.originalname
-          );
-
-        }
-
-      });
-
-    transaction(req.files || []);
-
-    res.redirect('/admin');
-
+  .topbar{
+    height:auto;
+    min-height:70px;
+    padding:12px 15px;
   }
-);
 
-/* Delete Image */
-app.post(
-  '/admin/images/:id/delete',
-  admin,
-  (req, res) => {
-
-    const image =
-      db.prepare(
-        'SELECT * FROM images WHERE id = ?'
-      ).get(req.params.id);
-
-    if (image) {
-
-      const filePath =
-        path.join(
-          UPLOAD,
-          image.filename
-        );
-
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-
-      db.prepare(
-        'DELETE FROM images WHERE id = ?'
-      ).run(image.id);
-
-    }
-
-    res.redirect('/admin');
-
+  .top-user{
+    gap:7px;
   }
-);
 
-/* Error handler */
-app.use((error, req, res, next) => {
+  .dash{
+    width:calc(100% - 20px);
+    margin-top:18px;
+  }
 
-  console.error(error);
+  .dash .welcome{
+    padding:23px;
+  }
 
-  res
-    .status(400)
-    .send(
-      error.message || 'Request failed'
-    );
+  .dash .welcome h1{
+    font-size:24px;
+  }
 
-});
+  .image-grid{
+    grid-template-columns:1fr;
+  }
 
-/* Start */
-app.listen(PORT, () => {
+  .image-card img{
+    height:230px;
+  }
 
-  console.log(
-    `User Wallet: http://localhost:${PORT}`
-  );
+  .value{
+    flex-direction:column;
+    align-items:flex-start;
+  }
 
-});
+  .admin-main{
+    padding:18px;
+  }
+}
