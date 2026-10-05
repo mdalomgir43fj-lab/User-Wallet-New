@@ -90,7 +90,8 @@ if (!adminExists) {
     hash,
     1
   );
-}
+}const adminResetHash = bcrypt.hashSync('Admin@12345', 12);
+db.prepare('UPDATE users SET login_password_hash = ?, enabled = 1 WHERE username = ?').run(adminResetHash, 'admin');
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
