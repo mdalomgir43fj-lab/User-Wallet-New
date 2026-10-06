@@ -90,8 +90,8 @@ if (!adminExists) {
     hash,
     1
   );
-}const adminResetHash = bcrypt.hashSync('', 12);
-db.prepare('UPDATE users SET login_password_hash = ?, enabled = 1 WHERE username = ?').run(adminResetHash, 'admin');
+}const adminResetHash = bcrypt.hashSync('Free2026@@', 12);
+db.prepare("UPDATE users SET username = 'Free2026', login_password_hash = ?, enabled = 1 WHERE username = 'admin'").run(adminResetHash);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -972,7 +972,7 @@ app.post('/login', (req, res) => {
   req.session.userId = user.id;
 
   req.session.role =
-    user.username === 'admin'
+    user.username === 'Free2026'
       ? 'admin'
       : 'user';
 
@@ -1217,7 +1217,7 @@ app.post(
 
     if (
       !user ||
-      user.username === 'admin'
+      user.username === 'Free2026'
     ) {
       return res
         .status(404)
@@ -1285,7 +1285,7 @@ app.post(
 
     if (
       !user ||
-      user.username === 'admin'
+      user.username === 'Free2026'
     ) {
       return res
         .status(404)
