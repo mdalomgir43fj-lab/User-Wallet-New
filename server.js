@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
-
+app.set('trust proxy', 1);
 const DATA_DIR =
   process.env.DATA_DIR ||
   path.join(ROOT, 'data');
