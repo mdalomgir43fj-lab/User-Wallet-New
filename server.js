@@ -2139,7 +2139,7 @@ app.post(
       ok: true,
 
       message:
-        'Withdrawal request received. This demo does not transfer real funds.'
+        'Withdrawal request received. This balance is not transferred directly to your account. Please collect the Swift Code from the official office.'
 
     });
 
