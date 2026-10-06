@@ -10,24 +10,20 @@ const crypto = require('crypto');
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
-app.set('trust proxy', 1);
-const DATA_DIR =
-  process.env.DATA_DIR ||
-  path.join(ROOT, 'data');
 
-const UPLOAD_DIR =
-  process.env.UPLOAD_DIR ||
-  path.join(ROOT, 'data', 'uploads');
+const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(ROOT, 'data', 'uploads');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const db = new Database(
-  path.join(DATA_DIR, 'user-wallet.db')
-);
-
+const db = new Database(path.join(DATA_DIR, 'user-wallet.db'));
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
+
+// =====================================================
+// DATABASE
+// =====================================================
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -50,61 +46,40 @@ db.exec(`
     filename TEXT NOT NULL,
     original_name TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id)
-      REFERENCES users(id)
-      ON DELETE CASCADE
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `);
 
-const columns = db
-  .prepare('PRAGMA table_info(users)')
-  .all()
-  .map(x => x.name);
+const columns = db.prepare('PRAGMA table_info(users)').all().map(x => x.name);
 
 if (!columns.includes('email')) {
-  db.exec(
-    "ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''"
-  );
+  db.exec("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''");
 }
 
 if (!columns.includes('dashboard_password')) {
-  db.exec(
-    "ALTER TABLE users ADD COLUMN dashboard_password TEXT DEFAULT ''"
-  );
+  db.exec("ALTER TABLE users ADD COLUMN dashboard_password TEXT DEFAULT ''");
 }
 
 if (!columns.includes('account_number')) {
-  db.exec(
-    "ALTER TABLE users ADD COLUMN account_number TEXT DEFAULT ''"
-  );
+  db.exec("ALTER TABLE users ADD COLUMN account_number TEXT DEFAULT ''");
 }
 
 if (!columns.includes('balance')) {
-  db.exec(
-    "ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0"
-  );
+  db.exec("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0");
 }
 
 if (!columns.includes('currency')) {
-  db.exec(
-    "ALTER TABLE users ADD COLUMN currency TEXT DEFAULT ''"
-  );
+  db.exec("ALTER TABLE users ADD COLUMN currency TEXT DEFAULT ''");
 }
 
 if (!columns.includes('enabled')) {
-  db.exec(
-    "ALTER TABLE users ADD COLUMN enabled INTEGER DEFAULT 1"
-  );
+  db.exec("ALTER TABLE users ADD COLUMN enabled INTEGER DEFAULT 1");
 }
 
 // =====================================================
 // ADMIN ACCOUNT
 // =====================================================
-// The admin account is separate from normal users.
-// These can also be overridden from Render Environment
-// Variables:
-// ADMIN_USERNAME
-// ADMIN_PASSWORD
+
 const ADMIN_USERNAME =
   process.env.ADMIN_USERNAME || 'Free2026';
 
@@ -120,9 +95,6 @@ db.exec(`
   );
 `);
 
-// Always synchronize the configured Admin password.
-// This fixes older databases that may contain an incorrect
-// or empty Admin password.
 const adminHash = bcrypt.hashSync(
   ADMIN_PASSWORD,
   12
@@ -130,8 +102,9 @@ const adminHash = bcrypt.hashSync(
 
 db.prepare(`
   INSERT INTO admins
-  (username, password_hash)
-  VALUES (?, ?)
+    (username, password_hash)
+  VALUES
+    (?, ?)
   ON CONFLICT(username)
   DO UPDATE SET
     password_hash = excluded.password_hash
@@ -140,13 +113,17 @@ db.prepare(`
   adminHash
 );
 
-// Disable legacy admin rows stored in users table.
-db.prepare(`
-  UPDATE users
-  SET enabled = 0
-  WHERE username = 'admin'
-     OR username = ?
-`).run(ADMIN_USERNAME);
+db.prepare(
+  "UPDATE users SET enabled = 0 WHERE username = 'admin' OR username = ?"
+).run(
+  ADMIN_USERNAME
+);
+
+// =====================================================
+// EXPRESS
+// =====================================================
+
+app.set('trust proxy', 1);
 
 app.use(
   express.urlencoded({
@@ -154,7 +131,9 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(
+  express.json()
+);
 
 app.use(
   express.static(
@@ -178,8 +157,7 @@ app.use(
       sameSite: 'lax',
 
       secure:
-        process.env.NODE_ENV ===
-        'production',
+        process.env.NODE_ENV === 'production',
 
       maxAge:
         1000 *
@@ -190,28 +168,17 @@ app.use(
   })
 );
 
+// =====================================================
+// HELPERS
+// =====================================================
+
 function escapeHtml(value) {
   return String(value ?? '')
-    .replace(
-      /&/g,
-      '&amp;'
-    )
-    .replace(
-      /</g,
-      '&lt;'
-    )
-    .replace(
-      />/g,
-      '&gt;'
-    )
-    .replace(
-      /"/g,
-      '&quot;'
-    )
-    .replace(
-      /'/g,
-      '&#039;'
-    );
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function getUser(id) {
@@ -228,9 +195,7 @@ function requireLogin(
   next
 ) {
   if (!req.session.userId) {
-    return res.redirect(
-      '/login'
-    );
+    return res.redirect('/login');
   }
 
   next();
@@ -242,9 +207,7 @@ function requireAdmin(
   next
 ) {
   if (!req.session.adminId) {
-    return res.redirect(
-      '/admin/login'
-    );
+    return res.redirect('/admin/login');
   }
 
   next();
@@ -259,18 +222,23 @@ function page(
 <!doctype html>
 <html>
 <head>
+
   <meta charset="utf-8">
+
   <meta
     name="viewport"
     content="width=device-width,initial-scale=1"
   >
+
   <title>
     ${escapeHtml(title)} · User Wallet
   </title>
+
   <link
     rel="stylesheet"
     href="/styles.css"
   >
+
 </head>
 
 <body>
@@ -284,6 +252,10 @@ ${script}
 `;
 }
 
+// =====================================================
+// USER LOGIN PAGE
+// =====================================================
+
 function loginPage(
   message = ''
 ) {
@@ -295,6 +267,7 @@ function loginPage(
   <section class="login-hero">
 
     <div class="brand-lockup">
+
       <div class="logo-mark">
         ◉
       </div>
@@ -302,6 +275,7 @@ function loginPage(
       <div class="brand-name">
         User Wallet
       </div>
+
     </div>
 
     <div class="login-card">
@@ -337,6 +311,7 @@ function loginPage(
             placeholder="User ID"
             required
           >
+
         </label>
 
         <label>
@@ -348,6 +323,7 @@ function loginPage(
             placeholder="Password"
             required
           >
+
         </label>
 
         <button
@@ -407,27 +383,27 @@ function loginPage(
 
     <div class="demo-grid">
 
-      <div class="tile t0">
+      <div class="tile">
         Tropical beach
       </div>
 
-      <div class="tile t1">
+      <div class="tile">
         Modern villa
       </div>
 
-      <div class="tile t2">
+      <div class="tile">
         Luxury car
       </div>
 
-      <div class="tile t3">
+      <div class="tile">
         Airplane
       </div>
 
-      <div class="tile t4">
+      <div class="tile">
         Mountain lake
       </div>
 
-      <div class="tile t5">
+      <div class="tile">
         City skyline
       </div>
 
@@ -462,6 +438,10 @@ function loginPage(
 `
   );
 }
+
+// =====================================================
+// USER DASHBOARD
+// =====================================================
 
 function userDashboard(
   user,
@@ -521,7 +501,10 @@ function userDashboard(
         action="/logout"
       >
 
-        <button class="logout">
+        <button
+          class="logout"
+          type="submit"
+        >
           Logout
         </button>
 
@@ -572,30 +555,30 @@ function userDashboard(
           ? images
               .map(
                 image => `
-          <div
-            class="image-card"
-          >
+                <div
+                  class="image-card"
+                >
 
-            <img
-              src="/user-files/${encodeURIComponent(
-                image.filename
-              )}"
-              alt="${escapeHtml(
-                image.original_name
-              )}"
-            >
+                  <img
+                    src="/user-files/${encodeURIComponent(
+                      image.filename
+                    )}"
+                    alt="${escapeHtml(
+                      image.original_name
+                    )}"
+                  >
 
-          </div>
-        `
+                </div>
+                `
               )
               .join('')
           : `
-          <div class="empty">
-            No images have been
-            assigned to your account
-            yet.
-          </div>
-        `
+              <div class="empty">
+                No images have been
+                assigned to your account
+                yet.
+              </div>
+            `
       }
 
     </section>
@@ -623,8 +606,7 @@ function userDashboard(
             class="copy"
             type="button"
             data-copy="${escapeHtml(
-              user.account_number ||
-              ''
+              user.account_number || ''
             )}"
           >
             ⧉
@@ -655,9 +637,12 @@ function userDashboard(
 
 </div>
 
+<!-- WITHDRAW MODAL -->
+
 <div
   id="modal"
   class="modal"
+  style="display:none;"
 >
 
   <div class="modal-card">
@@ -666,6 +651,7 @@ function userDashboard(
       class="x"
       type="button"
       onclick="closeModal()"
+      aria-label="Close"
     >
       ×
     </button>
@@ -693,105 +679,175 @@ function userDashboard(
     `
 <script>
 
-document
-  .querySelectorAll('.copy')
-  .forEach(button => {
+(function () {
 
-    button.onclick = async () => {
-
-      const value =
-        button.dataset.copy;
-
-      if (!value) {
-        return;
-      }
-
-      try {
-
-        await navigator
-          .clipboard
-          .writeText(value);
-
-        button.textContent =
-          '✓';
-
-        setTimeout(() => {
-          button.textContent =
-            '⧉';
-        }, 800);
-
-      } catch (e) {}
-
-    };
-
-  });
-
-const modal =
-  document.getElementById(
-    'modal'
-  );
-
-function closeModal() {
-  if (modal) {
-    modal.classList.remove(
-      'show'
+  const modal =
+    document.getElementById(
+      'modal'
     );
+
+  const withdraw =
+    document.querySelector(
+      '.withdraw'
+    );
+
+  const copyButtons =
+    document.querySelectorAll(
+      '.copy'
+    );
+
+  // Make sure the modal is hidden
+  // when the dashboard first loads.
+  if (modal) {
+    modal.style.display =
+      'none';
   }
-}
 
-const withdraw =
-  document.querySelector(
-    '.withdraw'
-  );
+  window.closeModal =
+    function () {
 
-if (withdraw) {
-
-  withdraw.onclick =
-    async () => {
-
-      try {
-
-        const response =
-          await fetch(
-            '/withdraw',
-            {
-              method: 'POST'
-            }
-          );
-
-        const data =
-          await response.json();
-
-        document.getElementById(
-          'modalText'
-        ).textContent =
-          data.message;
-
-        modal.classList.add(
-          'show'
-        );
-
-      } catch (error) {
-
-        document.getElementById(
-          'modalText'
-        ).textContent =
-          'Unable to process the request.';
-
-        modal.classList.add(
-          'show'
-        );
-
+      if (modal) {
+        modal.style.display =
+          'none';
       }
 
     };
 
-}
+  copyButtons.forEach(
+    button => {
+
+      button.addEventListener(
+        'click',
+        async () => {
+
+          const value =
+            button.dataset.copy ||
+            '';
+
+          if (!value) {
+            return;
+          }
+
+          try {
+
+            await navigator
+              .clipboard
+              .writeText(value);
+
+            button.textContent =
+              '✓';
+
+            setTimeout(
+              () => {
+                button.textContent =
+                  '⧉';
+              },
+              800
+            );
+
+          } catch (error) {
+
+            // Ignore clipboard errors.
+
+          }
+
+        }
+      );
+
+    }
+  );
+
+  if (withdraw) {
+
+    withdraw.addEventListener(
+      'click',
+      async () => {
+
+        if (!modal) {
+          return;
+        }
+
+        try {
+
+          const response =
+            await fetch(
+              '/withdraw',
+              {
+                method: 'POST'
+              }
+            );
+
+          const data =
+            await response.json();
+
+          const text =
+            document.getElementById(
+              'modalText'
+            );
+
+          if (text) {
+
+            text.textContent =
+              data.message ||
+              'Withdrawal request received.';
+
+          }
+
+        } catch (error) {
+
+          const text =
+            document.getElementById(
+              'modalText'
+            );
+
+          if (text) {
+
+            text.textContent =
+              'Unable to process the request.';
+
+          }
+
+        }
+
+        modal.style.display =
+          'flex';
+
+      }
+    );
+
+  }
+
+  // Clicking the dark background
+  // also closes the modal.
+  if (modal) {
+
+    modal.addEventListener(
+      'click',
+      event => {
+
+        if (
+          event.target === modal
+        ) {
+
+          window.closeModal();
+
+        }
+
+      }
+    );
+
+  }
+
+})();
 
 </script>
 `
   );
 }
+
+// =====================================================
+// ADMIN LOGIN PAGE
+// =====================================================
 
 function adminLoginPage(
   message = ''
@@ -851,6 +907,7 @@ function adminLoginPage(
             autocomplete="username"
             required
           >
+
         </label>
 
         <label>
@@ -863,6 +920,7 @@ function adminLoginPage(
             autocomplete="current-password"
             required
           >
+
         </label>
 
         <button
@@ -929,7 +987,13 @@ function adminLoginPage(
   );
 }
 
-function adminPage(users) {
+// =====================================================
+// ADMIN PANEL
+// =====================================================
+
+function adminPage(
+  users
+) {
 
   return page(
     'Admin Panel',
@@ -1030,6 +1094,7 @@ function adminPage(users) {
               name="username"
               required
             >
+
           </label>
 
           <label>
@@ -1039,6 +1104,7 @@ function adminPage(users) {
               name="full_name"
               required
             >
+
           </label>
 
           <label>
@@ -1047,6 +1113,7 @@ function adminPage(users) {
             <input
               name="email"
             >
+
           </label>
 
           <label>
@@ -1057,6 +1124,7 @@ function adminPage(users) {
               type="password"
               required
             >
+
           </label>
 
           <label>
@@ -1065,6 +1133,7 @@ function adminPage(users) {
             <input
               name="dashboard_password"
             >
+
           </label>
 
           <label>
@@ -1073,6 +1142,7 @@ function adminPage(users) {
             <input
               name="account_number"
             >
+
           </label>
 
           <label>
@@ -1084,6 +1154,7 @@ function adminPage(users) {
               step="0.01"
               value="0"
             >
+
           </label>
 
           <label>
@@ -1093,6 +1164,7 @@ function adminPage(users) {
               name="currency"
               placeholder="USD, EUR, points..."
             >
+
           </label>
 
         </div>
@@ -1188,6 +1260,7 @@ function adminPage(users) {
             user.full_name
           )}"
         >
+
       </label>
 
       <label>
@@ -1199,6 +1272,7 @@ function adminPage(users) {
             user.email
           )}"
         >
+
       </label>
 
       <label>
@@ -1210,6 +1284,7 @@ function adminPage(users) {
             user.account_number
           )}"
         >
+
       </label>
 
       <label>
@@ -1223,6 +1298,7 @@ function adminPage(users) {
             user.balance
           )}"
         >
+
       </label>
 
       <label>
@@ -1234,6 +1310,7 @@ function adminPage(users) {
             user.currency
           )}"
         >
+
       </label>
 
       <label>
@@ -1245,6 +1322,7 @@ function adminPage(users) {
             user.dashboard_password
           )}"
         >
+
       </label>
 
       <label>
@@ -1255,6 +1333,7 @@ function adminPage(users) {
           type="password"
           placeholder="Leave blank to keep"
         >
+
       </label>
 
       <label>
@@ -1358,33 +1437,33 @@ function adminPage(users) {
       images
         .map(
           image => `
-      <div>
+            <div>
 
-        <img
-          src="/admin-files/${encodeURIComponent(
-            image.filename
-          )}"
-          alt="${escapeHtml(
-            image.original_name
-          )}"
-        >
+              <img
+                src="/admin-files/${encodeURIComponent(
+                  image.filename
+                )}"
+                alt="${escapeHtml(
+                  image.original_name
+                )}"
+              >
 
-        <form
-          method="post"
-          action="/admin/images/${image.id}/delete"
-        >
+              <form
+                method="post"
+                action="/admin/images/${image.id}/delete"
+              >
 
-          <button
-            class="tiny"
-            type="submit"
-          >
-            ×
-          </button>
+                <button
+                  class="tiny"
+                  type="submit"
+                >
+                  ×
+                </button>
 
-        </form>
+              </form>
 
-      </div>
-    `
+            </div>
+          `
         )
         .join('')
     }
@@ -1404,6 +1483,10 @@ function adminPage(users) {
 `
   );
 }
+
+// =====================================================
+// UPLOAD CONFIGURATION
+// =====================================================
 
 const storage =
   multer.diskStorage({
@@ -1446,64 +1529,65 @@ const storage =
 
   });
 
-const upload = multer({
+const upload =
+  multer({
 
-  storage,
+    storage,
 
-  limits: {
+    limits: {
 
-    files: 20,
+      files: 20,
 
-    fileSize:
-      10 *
-      1024 *
-      1024
+      fileSize:
+        10 *
+        1024 *
+        1024
 
-  },
+    },
 
-  fileFilter:
-    function (
-      req,
-      file,
-      cb
-    ) {
-
-      const allowed = [
-
-        'image/jpeg',
-
-        'image/png',
-
-        'image/webp',
-
-        'image/gif'
-
-      ];
-
-      if (
-        allowed.includes(
-          file.mimetype
-        )
+    fileFilter:
+      function (
+        req,
+        file,
+        cb
       ) {
 
-        cb(
-          null,
-          true
-        );
+        const allowed = [
 
-      } else {
+          'image/jpeg',
 
-        cb(
-          new Error(
-            'Only JPG, PNG, WebP and GIF images are allowed.'
+          'image/png',
+
+          'image/webp',
+
+          'image/gif'
+
+        ];
+
+        if (
+          allowed.includes(
+            file.mimetype
           )
-        );
+        ) {
+
+          cb(
+            null,
+            true
+          );
+
+        } else {
+
+          cb(
+            new Error(
+              'Only JPG, PNG, WebP and GIF images are allowed.'
+            )
+          );
+
+        }
 
       }
 
-    }
-
-});
+  });
 
 // =====================================================
 // HOME
@@ -1541,7 +1625,7 @@ app.get(
 );
 
 // =====================================================
-// USER LOGIN PAGE
+// USER LOGIN GET
 // =====================================================
 
 app.get(
@@ -1576,7 +1660,7 @@ app.get(
 );
 
 // =====================================================
-// USER LOGIN
+// USER LOGIN POST
 // =====================================================
 
 app.post(
@@ -1640,7 +1724,7 @@ app.post(
     }
 
     req.session.regenerate(
-      (error) => {
+      error => {
 
         if (error) {
 
@@ -1676,7 +1760,7 @@ app.post(
 );
 
 // =====================================================
-// ADMIN LOGIN PAGE
+// ADMIN LOGIN GET
 // =====================================================
 
 app.get(
@@ -1693,13 +1777,16 @@ app.get(
 
     }
 
+    const error =
+      req.query.error
+        ? String(
+            req.query.error
+          )
+        : '';
+
     res.send(
       adminLoginPage(
-        req.query.error
-          ? String(
-              req.query.error
-            )
-          : ''
+        error
       )
     );
 
@@ -1707,7 +1794,7 @@ app.get(
 );
 
 // =====================================================
-// ADMIN LOGIN
+// ADMIN LOGIN POST
 // =====================================================
 
 app.post(
@@ -1760,7 +1847,7 @@ app.post(
     }
 
     req.session.regenerate(
-      (error) => {
+      error => {
 
         if (error) {
 
@@ -1799,27 +1886,6 @@ app.post(
 );
 
 // =====================================================
-// ADMIN LOGOUT
-// =====================================================
-
-app.get(
-  '/admin/logout',
-  (req, res) => {
-
-    req.session.destroy(
-      () => {
-
-        res.redirect(
-          '/admin/login'
-        );
-
-      }
-    );
-
-  }
-);
-
-// =====================================================
 // USER LOGOUT
 // =====================================================
 
@@ -1832,6 +1898,27 @@ app.post(
 
         res.redirect(
           '/login'
+        );
+
+      }
+    );
+
+  }
+);
+
+// =====================================================
+// ADMIN LOGOUT
+// =====================================================
+
+app.get(
+  '/admin/logout',
+  (req, res) => {
+
+    req.session.destroy(
+      () => {
+
+        res.redirect(
+          '/admin/login'
         );
 
       }
@@ -1894,7 +1981,7 @@ app.get(
 );
 
 // =====================================================
-// PROTECTED USER FILES
+// USER FILES
 // =====================================================
 
 app.get(
@@ -1976,7 +2063,7 @@ app.get(
 );
 
 // =====================================================
-// PROTECTED ADMIN FILES
+// ADMIN FILES
 // =====================================================
 
 app.get(
@@ -2199,17 +2286,7 @@ app.post(
           enabled
         )
         VALUES
-        (
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          1
-        )
+        (?, ?, ?, ?, ?, ?, ?, ?, 1)
         `
       ).run(
         username,
@@ -2276,8 +2353,7 @@ app.post(
     if (
       !user ||
       user.username === 'admin' ||
-      user.username ===
-        ADMIN_USERNAME
+      user.username === ADMIN_USERNAME
     ) {
 
       return res
@@ -2293,8 +2369,7 @@ app.post(
 
     const newPassword =
       String(
-        req.body
-          .new_login_password ||
+        req.body.new_login_password ||
         ''
       ).trim();
 
@@ -2314,23 +2389,14 @@ app.post(
       `
       UPDATE users
       SET
-
         full_name = ?,
-
         email = ?,
-
         dashboard_password = ?,
-
         account_number = ?,
-
         balance = ?,
-
         currency = ?,
-
         enabled = ?,
-
         login_password_hash = ?
-
       WHERE id = ?
       `
     ).run(
@@ -2400,8 +2466,7 @@ app.post(
     if (
       !user ||
       user.username === 'admin' ||
-      user.username ===
-        ADMIN_USERNAME
+      user.username === ADMIN_USERNAME
     ) {
 
       return res
@@ -2426,8 +2491,7 @@ app.post(
         );
 
     for (
-      const image
-      of images
+      const image of images
     ) {
 
       const filePath =
@@ -2477,7 +2541,7 @@ app.post(
 );
 
 // =====================================================
-// UPLOAD USER IMAGES
+// UPLOAD IMAGES
 // =====================================================
 
 app.post(
@@ -2497,8 +2561,7 @@ app.post(
     if (
       !user ||
       user.username === 'admin' ||
-      user.username ===
-        ADMIN_USERNAME
+      user.username === ADMIN_USERNAME
     ) {
 
       return res
@@ -2527,18 +2590,13 @@ app.post(
         files => {
 
           for (
-            const file
-            of files
+            const file of files
           ) {
 
             insert.run(
-
               user.id,
-
               file.filename,
-
               file.originalname
-
             );
 
           }
